@@ -1,13 +1,13 @@
 from django.core.cache import cache
 
-from . import ors
+from . import cache_key, ors
 
 
 def geocode(text):
     text = " ".join(text.split())
     if not text:
         raise ors.PlaceNotFound("Enter a place name")
-    key = ors.cache_key("geocode", text.lower())
+    key = cache_key("geocode", text.lower())
     place = cache.get(key)
     if place is None:
         place = search(text)

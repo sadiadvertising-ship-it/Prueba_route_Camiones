@@ -1,6 +1,3 @@
-import hashlib
-import json
-
 import requests
 from django.conf import settings
 
@@ -43,8 +40,3 @@ def error_message(response):
     if errors:
         return errors[0]
     return response.text[:200]
-
-
-def cache_key(prefix, value):
-    digest = hashlib.sha1(json.dumps(value, sort_keys=True).encode()).hexdigest()
-    return f"{prefix}:{digest}"

@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from django.core.cache import cache
 
-from . import ors
+from . import cache_key, ors
 
 LB_PER_METRIC_TON = 2204.62
 ROUTE_COUNT = 3
@@ -74,7 +74,7 @@ def directions(points, weight_lb, name, preference):
             "profile_params": {"restrictions": {"weight": round(weight_lb / LB_PER_METRIC_TON, 2)}},
         },
     }
-    key = ors.cache_key("directions", body)
+    key = cache_key("directions", body)
     route = cache.get(key)
     if route is None:
         data = ors.request("POST", "/v2/directions/driving-hgv/geojson", json=body)
@@ -110,7 +110,7 @@ def snap(points):
     if not points:
         return []
     body = {"locations": points, "radius": SNAP_RADIUS_M}
-    key = ors.cache_key("snap", body)
+    key = cache_key("snap", body)
     snapped = cache.get(key)
     if snapped is None:
         try:

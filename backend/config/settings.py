@@ -46,6 +46,8 @@ REST_FRAMEWORK = {
 
 CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 
+ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
+
 LANGUAGE_CODE = "en-us"
 
 TIME_ZONE = "UTC"

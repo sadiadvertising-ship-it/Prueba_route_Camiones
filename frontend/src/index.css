@@ -261,14 +261,76 @@ form > button:disabled {
   border-color: var(--ink);
 }
 
+.slider {
+  display: grid;
+  gap: 6px;
+  max-width: 640px;
+  margin: 14px 0 4px;
+}
+
+.slider-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.slider button {
+  padding: 3px 12px;
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.slider .track {
+  position: relative;
+  display: block;
+  padding: 4px 0;
+}
+
+.slider input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  accent-color: var(--ink);
+}
+
+.slider .arrival {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  margin-left: -1px;
+  background: var(--ink);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.slider .ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.slider .ticks i {
+  font-style: normal;
+}
+
+.slider small {
+  color: var(--muted);
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 18px;
-  margin: 10px 0 24px;
+  margin: 14px 0 24px;
   padding: 0;
   list-style: none;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: var(--muted);
 }
 
@@ -285,6 +347,25 @@ form > button:disabled {
 .legend .line.thick {
   height: 6px;
   vertical-align: 2px;
+}
+
+.legend .heat,
+.legend .truck {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: -2px;
+}
+
+.legend .heat {
+  background: linear-gradient(90deg, var(--low), var(--high), var(--no-travel));
+  opacity: 0.4;
+}
+
+.legend .truck {
+  border: 3px solid var(--ink);
 }
 
 .caption {
@@ -333,6 +414,10 @@ form > button:disabled {
 
 .checkpoints td.zero {
   color: var(--muted);
+}
+
+.checkpoints tr.now td {
+  background: #ebebe9;
 }
 
 @media (max-width: 860px) {

@@ -43,6 +43,7 @@ export default function App() {
   const [selected, setSelected] = useState(0)
   const [errors, setErrors] = useState({})
   const [busy, setBusy] = useState(false)
+  const [hour, setHour] = useState(0)
   const main = useRef(null)
 
   useEffect(() => {
@@ -58,6 +59,7 @@ export default function App() {
       if (ok) {
         setTrip(body)
         setSelected(0)
+        setHour(0)
       } else {
         setErrors(body)
       }
@@ -85,8 +87,8 @@ export default function App() {
       <main ref={main}>
         <Status trip={trip} busy={busy} />
         <div className={busy ? 'stale' : undefined}>
-          <RouteMap trip={trip} selected={selected} onSelect={setSelected} />
-          {trip && <Checkpoints route={trip.routes[selected]} />}
+          <RouteMap trip={trip} selected={selected} hour={hour} onSelect={setSelected} onHour={setHour} />
+          {trip && <Checkpoints route={trip.routes[selected]} now={trip.hours[hour]} />}
         </div>
       </main>
     </div>

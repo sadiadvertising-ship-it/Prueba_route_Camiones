@@ -6,7 +6,9 @@ function Reading({ value, unit }) {
   return <td className={value ? undefined : 'zero'}>{`${value} ${unit}`}</td>
 }
 
-export default function Checkpoints({ route }) {
+export default function Checkpoints({ route, now }) {
+  const cps = route.checkpoints
+  const t = Date.parse(now)
   return (
     <>
       <p className="caption">{route.name}: forecast at each checkpoint for the hour the truck gets there.</p>
@@ -24,8 +26,8 @@ export default function Checkpoints({ route }) {
             </tr>
           </thead>
           <tbody>
-            {route.checkpoints.map((cp, i) => (
-              <tr key={i}>
+            {cps.map((cp, i) => (
+              <tr key={i} className={Date.parse(cp.eta) <= t && (i === cps.length - 1 || t < Date.parse(cps[i + 1].eta)) ? 'now' : undefined}>
                 <td>{cp.mile.toLocaleString('en-US')}</td>
                 <td>{clock(cp.eta)}</td>
                 <td>

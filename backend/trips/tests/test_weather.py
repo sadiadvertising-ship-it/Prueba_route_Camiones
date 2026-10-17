@@ -158,14 +158,19 @@ def flag(answer):
     answer["hourly"]["snowfall"][5] = True
 
 
+def huge(answer):
+    answer["hourly"]["rain"][5] = 10**400
+
+
 @pytest.mark.parametrize(
     "spoil, message",
     [
         (bare, "missing its hourly values"),
         (short, "does not cover the trip's time window"),
         (late, "does not cover the trip's time window"),
-        (text, "must be numbers"),
-        (flag, "must be numbers"),
+        (text, "not a usable number"),
+        (flag, "not a usable number"),
+        (huge, "not a usable number"),
     ],
 )
 def test_answers_that_do_not_fit_the_request_are_refused(spoil, message):

@@ -16,8 +16,10 @@ def answers(trip, reading=lambda route, point, hour: {}):
         end = datetime.fromisoformat(query["end_hour"]).replace(tzinfo=timezone.utc)
         hours = (end - start) // timedelta(hours=1) + 1
         items = []
-        for _ in query["latitude"].split(","):
+        for lat, lon in zip(query["latitude"].split(","), query["longitude"].split(",")):
             route, point = next(points)
+            # The URLs must ask for the checkpoints in the order the ticket keeps them.
+            assert (lat, lon) == (f"{point['lat']:.3f}", f"{point['lon']:.3f}")
             rows = [dict(CALM, **reading(route, point, hour)) for hour in range(hours)]
             hourly = {name: [row[name] for row in rows] for name in CALM}
             hourly["time"] = [(start + timedelta(hours=hour)).strftime("%Y-%m-%dT%H:%M") for hour in range(hours)]

@@ -60,7 +60,7 @@ def parse(item, point, start, hours):
     if not all(isinstance(values, list) and len(values) == hours for values in series) or times[0] != start.strftime("%Y-%m-%dT%H:%M"):
         raise BadForecast("A forecast does not cover the trip's time window.")
     if not all(number(value) for values in series[1:] for value in values):
-        raise BadForecast("Forecast values must be numbers.")
+        raise BadForecast("A forecast value is not a usable number.")
     return {
         "lat": point["lat"],
         "lon": point["lon"],
@@ -74,7 +74,8 @@ def parse(item, point, start, hours):
 
 
 def number(value):
-    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
+    # No real reading comes near a million; past that, sums overflow and the JSON cannot render.
+    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool) and abs(value) < 1e6)
 
 
 def liquid(rain, showers):

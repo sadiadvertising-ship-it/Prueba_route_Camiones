@@ -89,14 +89,26 @@ it('says so when Open-Meteo cannot be reached', async () => {
   expect(await planTrip({})).toEqual({ ok: false, body: { detail: 'Open-Meteo could not be reached. Try again in a minute.' } })
 })
 
-it('passes on what the server says about the forecast it was sent', async () => {
+it('passes on why the server refused the forecast, in a message the form can show', async () => {
   services({
     '/api/trips/plan/': json(routes),
     [OPEN_METEO]: json([]),
     '/api/trips/assess/': json({ detail: 'This plan has expired. Plan the trip again.' }, 400),
   })
-
   expect(await planTrip({})).toEqual({ ok: false, body: { detail: 'This plan has expired. Plan the trip again.' } })
+
+  services({
+    '/api/trips/plan/': json(routes),
+    [OPEN_METEO]: json([]),
+    '/api/trips/assess/': json({ forecasts: ['Expected forecasts for 3 checkpoints, got 0.'] }, 400),
+  })
+  expect(await planTrip({})).toEqual({ ok: false, body: { detail: 'The forecast could not be checked. Plan the trip again.' } })
+})
+
+it('refuses an Open-Meteo answer that is not JSON', async () => {
+  services({ '/api/trips/plan/': json(routes), [OPEN_METEO]: new Response('<html>maintenance</html>', { status: 200 }) })
+
+  expect(await planTrip({})).toEqual({ ok: false, body: { detail: 'Open-Meteo sent a forecast that could not be read.' } })
 })
 
 it('turns a server error page into a message instead of choking on the HTML', async () => {

@@ -16,12 +16,14 @@ async function post(path, body) {
 async function forecast(url) {
   let response
   try {
-    response = await fetch(url)
+    // The server used to give Open-Meteo 20 seconds; the browser keeps the same patience.
+    response = await fetch(url, { signal: AbortSignal.timeout(20000) })
   } catch {
     throw new Error('Open-Meteo could not be reached. Try again in a minute.')
   }
   const body = await response.json().catch(() => null)
   if (!response.ok) throw new Error(`Open-Meteo: ${body?.reason || `HTTP ${response.status}`}`)
+  if (body === null) throw new Error('Open-Meteo sent a forecast that could not be read.')
   return body
 }
 
@@ -38,7 +40,8 @@ export async function planTrip(trip) {
     return { ok: false, body: { detail: error.message } }
   }
   const scored = await post('/api/trips/assess/', { ticket, forecasts })
-  if (!scored.ok) return scored
+  // The form only shows its own fields and `detail`, so anything else would vanish silently.
+  if (!scored.ok) return { ok: false, body: { detail: scored.body.detail || 'The forecast could not be checked. Plan the trip again.' } }
   const geometry = Object.fromEntries(plan.routes.map((route) => [route.id, route.coordinates]))
   return {
     ok: true,

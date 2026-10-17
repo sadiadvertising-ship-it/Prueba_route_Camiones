@@ -18,8 +18,10 @@ MAX_DETOUR_FACTOR = 1.5
 
 
 def route_options(origin, destination, weight_lb):
-    a = [origin["lon"], origin["lat"]]
-    b = [destination["lon"], destination["lat"]]
+    given = [[origin["lon"], origin["lat"]], [destination["lon"], destination["lat"]]]
+    # The same 350 m limit applies to the trip's ends, and a town's centre can sit further
+    # from a road than that, so both ends are moved onto a truck road first.
+    a, b = (spot or point for spot, point in zip(snap(given), given))
     with ThreadPoolExecutor(max_workers=4) as pool:
         # ORS native alternatives only work under 100 km, and for the hgv profile
         # only "recommended" and "shortest" run on the fast index ("fastest" takes
@@ -29,7 +31,8 @@ def route_options(origin, destination, weight_lb):
         jobs = [pool.submit(directions, [a, b], weight_lb, "Shortest", "shortest")]
         main = main_job.result()
         for via in snap(detour_points(main["coordinates"], a, b)):
-            jobs.append(pool.submit(directions, [a, via["location"], b], weight_lb, "Detour", "recommended"))
+            if via:
+                jobs.append(pool.submit(directions, [a, via, b], weight_lb, "Detour", "recommended"))
         candidates = []
         for job in jobs:
             try:
@@ -116,8 +119,9 @@ def snap(points):
         try:
             data = ors.request("POST", "/v2/snap/driving-hgv", json=body)
         except ors.ORSError:
-            return []
-        snapped = [loc for loc in data.get("locations", []) if loc]
+            return [None] * len(points)
+        found = data.get("locations") or []
+        snapped = [spot["location"] if spot else None for spot in found] + [None] * (len(points) - len(found))
         cache.set(key, snapped, 3600)
     return snapped
 

@@ -42,6 +42,15 @@ def snapped(*locations):
     return {"locations": [{"location": p, "name": "", "snapped_distance": 10.0} if p else None for p in locations]}
 
 
+def add_ends(*locations):
+    # The trip's ends are snapped onto a road before any route is asked for.
+    responses.post(SNAP_URL, json=snapped(*(locations or (A, B))), match=[body_has(locations=[A, B])])
+
+
+def add_detour_snap(*locations):
+    responses.post(SNAP_URL, json=snapped(*locations), match=[body_has(locations=[NORTH_1, SOUTH_1, NORTH_2, SOUTH_2])])
+
+
 def add_main(response):
     responses.post(DIRECTIONS_URL, json=response, match=[body_has(preference="recommended", coordinates=[A, B])])
 
@@ -60,9 +69,10 @@ def bodies():
 
 @responses.activate
 def test_options_are_the_fastest_distinct_routes():
+    add_ends()
     add_main(line(30.0))
     add_shortest(line(30.5, miles=90.0, seconds=9000.0, road="US 380"))
-    responses.post(SNAP_URL, json=snapped(NORTH_1, None, NORTH_2, SOUTH_2))
+    add_detour_snap(NORTH_1, None, NORTH_2, SOUTH_2)
     add_detour(NORTH_1, line(31.0, seconds=8000.0, road="US 83"))
     add_detour(NORTH_2, line(30.0, seconds=7300.0))
     add_detour(SOUTH_2, line(30.0, seconds=7400.0))
@@ -72,14 +82,15 @@ def test_options_are_the_fastest_distinct_routes():
     assert [r["name"] for r in routes] == ["Fastest", "Via US 83", "Shortest"]
     assert routes[0]["distance_miles"] == 100.0
     assert routes[0]["steps"] == [{"distance_miles": 100.0, "duration_seconds": 7200.0, "from": 0, "to": 10, "road": "I 10"}]
-    assert len(responses.calls) == 6
+    assert len(responses.calls) == 7
 
 
 @responses.activate
 def test_detour_without_a_road_of_its_own_gets_a_numbered_label():
+    add_ends()
     add_main(line(30.0))
     add_shortest(line(30.0))
-    responses.post(SNAP_URL, json=snapped(NORTH_1, NORTH_2, SOUTH_2))
+    add_detour_snap(NORTH_1, NORTH_2, SOUTH_2)
     add_detour(NORTH_1, line(31.0, seconds=8000.0, road="Marvin D Love Freeway, US 67"))
     add_detour(NORTH_2, line(31.5, seconds=8500.0, road="-"))
     add_detour(SOUTH_2, line(32.0, seconds=9000.0, road="FM 12"))
@@ -91,9 +102,10 @@ def test_detour_without_a_road_of_its_own_gets_a_numbered_label():
 
 @responses.activate
 def test_slow_and_duplicate_candidates_leave_fewer_options():
+    add_ends()
     add_main(line(30.0))
     add_shortest(line(30.5, seconds=20000.0))
-    responses.post(SNAP_URL, json=snapped(NORTH_1, SOUTH_1))
+    add_detour_snap(NORTH_1, SOUTH_1)
     add_detour(NORTH_1, line(30.0, seconds=7300.0))
     add_detour(SOUTH_1, line(30.0, seconds=7400.0))
 
@@ -104,9 +116,10 @@ def test_slow_and_duplicate_candidates_leave_fewer_options():
 
 @responses.activate
 def test_failed_detour_is_skipped():
+    add_ends()
     add_main(line(30.0))
     add_shortest(line(30.5, seconds=9000.0))
-    responses.post(SNAP_URL, json=snapped(NORTH_1, NORTH_2))
+    add_detour_snap(NORTH_1, NORTH_2)
     add_detour(NORTH_1, {"error": {"code": 2010, "message": "Point not found"}}, status=404)
     add_detour(NORTH_2, line(31.5, seconds=8500.0, road="US 90"))
 
@@ -124,7 +137,7 @@ def test_snap_failure_only_drops_the_detours():
     routes = route_options(ORIGIN, DESTINATION, 35000)
 
     assert [r["name"] for r in routes] == ["Fastest", "Shortest"]
-    assert len(responses.calls) == 3
+    assert len(responses.calls) == 4
 
 
 @responses.activate
@@ -138,9 +151,10 @@ def test_main_route_error_is_raised():
 
 @responses.activate
 def test_requests_carry_truck_weight_miles_and_lon_lat_order():
+    add_ends()
     add_main(line(30.0))
     add_shortest(line(30.5, seconds=9000.0))
-    responses.post(SNAP_URL, json=snapped(NORTH_1))
+    add_detour_snap(NORTH_1)
     add_detour(NORTH_1, line(31.0, seconds=8000.0))
 
     route_options(ORIGIN, DESTINATION, 35000)
@@ -151,25 +165,50 @@ def test_requests_carry_truck_weight_miles_and_lon_lat_order():
     assert main["options"]["vehicle_type"] == "hgv"
     assert main["options"]["profile_params"]["restrictions"]["weight"] == pytest.approx(15.88, abs=0.01)
     assert "avoid_features" not in main["options"]
-    snap_body = json.loads(next(c.request.body for c in responses.calls if c.request.url == SNAP_URL))
-    assert snap_body == {"locations": [NORTH_1, SOUTH_1, NORTH_2, SOUTH_2], "radius": 30000}
+    snaps = [json.loads(c.request.body) for c in responses.calls if c.request.url == SNAP_URL]
+    assert snaps == [{"locations": [A, B], "radius": 30000}, {"locations": [NORTH_1, SOUTH_1, NORTH_2, SOUTH_2], "radius": 30000}]
 
 
 @responses.activate
 def test_results_are_cached_per_trip_and_weight():
+    add_ends()
     add_main(line(30.0))
     add_shortest(line(30.5, seconds=9000.0))
-    responses.post(SNAP_URL, json=snapped(NORTH_1))
+    add_detour_snap(NORTH_1)
     add_detour(NORTH_1, line(31.0, seconds=8000.0))
 
     route_options(ORIGIN, DESTINATION, 35000)
     route_options(ORIGIN, DESTINATION, 35000)
-    assert len(responses.calls) == 4
+    assert len(responses.calls) == 5
 
     route_options(ORIGIN, DESTINATION, 80000)
-    assert len(responses.calls) == 7
+    assert len(responses.calls) == 8
     weights = {b["options"]["profile_params"]["restrictions"]["weight"] for b in bodies()}
     assert weights == {15.88, 36.29}
+
+
+@responses.activate
+def test_both_ends_are_moved_onto_a_truck_road_before_routing():
+    near_a, near_b = [-100.01, 30.01], [-98.99, 29.99]
+    add_ends(near_a, near_b)
+    responses.post(DIRECTIONS_URL, json=line(30.0), match=[body_has(preference="recommended", coordinates=[near_a, near_b])])
+    add_shortest(line(30.0))
+
+    routes = route_options(ORIGIN, DESTINATION, 35000)
+
+    assert [r["name"] for r in routes] == ["Fastest"]
+
+
+@responses.activate
+def test_an_end_with_no_road_nearby_is_routed_as_given():
+    near_b = [-98.99, 29.99]
+    add_ends(None, near_b)
+    responses.post(DIRECTIONS_URL, json=line(30.0), match=[body_has(preference="recommended", coordinates=[A, near_b])])
+    add_shortest(line(30.0))
+
+    routes = route_options(ORIGIN, DESTINATION, 35000)
+
+    assert [r["name"] for r in routes] == ["Fastest"]
 
 
 def test_detour_points_sit_beside_the_route():

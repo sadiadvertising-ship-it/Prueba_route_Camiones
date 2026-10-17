@@ -198,5 +198,6 @@ def test_non_json_success_body_becomes_weather_error():
 def test_network_failure_becomes_weather_error():
     responses.get(FORECAST_URL, body=requests.ConnectTimeout("timed out"))
 
-    with pytest.raises(WeatherError, match="unreachable"):
+    with pytest.raises(WeatherError, match="did not answer") as failure:
         hourly_forecast([DALLAS], START, END)
+    assert "timed out" not in str(failure.value)

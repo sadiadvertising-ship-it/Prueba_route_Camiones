@@ -19,7 +19,8 @@ def request(method, path, **kwargs):
     try:
         response = requests.request(method, BASE_URL + path, headers=headers, timeout=20, **kwargs)
     except requests.RequestException as exc:
-        raise ORSError(f"OpenRouteService is unreachable: {exc}") from exc
+        # The message reaches the dispatcher's screen; a connection trace would only confuse there.
+        raise ORSError("OpenRouteService did not answer. Try again in a minute.") from exc
     if response.status_code >= 400:
         raise ORSError(f"OpenRouteService error {response.status_code}: {error_message(response)}")
     try:

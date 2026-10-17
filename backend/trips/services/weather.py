@@ -54,7 +54,7 @@ def request(params):
     try:
         response = requests.get(FORECAST_URL, params=params, timeout=20)
     except requests.RequestException as exc:
-        raise WeatherError(f"Open-Meteo is unreachable: {exc}") from exc
+        raise WeatherError("Open-Meteo did not answer. Try again in a minute.") from exc
     if response.status_code >= 400:
         try:
             body = response.json()

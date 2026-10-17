@@ -11,8 +11,9 @@ URL = "https://api.openrouteservice.org/geocode/search"
 def test_network_failure_becomes_ors_error():
     responses.get(URL, body=requests.ConnectTimeout("timed out"))
 
-    with pytest.raises(ors.ORSError, match="unreachable"):
+    with pytest.raises(ors.ORSError, match="did not answer") as failure:
         ors.request("GET", "/geocode/search")
+    assert "timed out" not in str(failure.value)
 
 
 @responses.activate

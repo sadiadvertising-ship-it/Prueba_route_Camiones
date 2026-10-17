@@ -34,6 +34,11 @@ def error_message(response):
         body = response.json()
     except ValueError:
         return response.text[:200]
+    if not isinstance(body, dict):
+        return response.text[:200]
+    # The rate limiter answers with a bare string instead of the usual error object.
+    if isinstance(body.get("error"), str):
+        return body["error"]
     if isinstance(body.get("error"), dict):
         return body["error"].get("message", str(body["error"]))
     # The geocoder is Pelias and uses its own error envelope.

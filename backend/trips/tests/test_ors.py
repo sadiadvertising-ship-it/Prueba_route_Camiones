@@ -25,6 +25,15 @@ def test_plain_text_error_body_is_reported():
 
 
 @responses.activate
+def test_rate_limit_message_is_reported_without_its_json():
+    responses.get(URL, json={"error": "Rate Limit Exceeded"}, status=429)
+
+    with pytest.raises(ors.ORSError) as failure:
+        ors.request("GET", "/geocode/search")
+    assert str(failure.value) == "OpenRouteService error 429: Rate Limit Exceeded"
+
+
+@responses.activate
 def test_pelias_error_message_is_reported():
     responses.get(URL, json={"geocoding": {"errors": ["invalid param 'text': text length, must be >0"]}}, status=400)
 

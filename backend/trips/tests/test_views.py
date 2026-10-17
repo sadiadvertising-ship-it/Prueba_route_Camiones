@@ -163,6 +163,69 @@ def test_geocoder_outage_is_a_bad_gateway_too(client, planned, monkeypatch):
     assert "quota" in response.json()["detail"]
 
 
+def test_the_whole_plan_renders_as_json(client, monkeypatch):
+    monkeypatch.setattr(serializers, "geocode", geocode)
+    route = {
+        "name": "Fastest",
+        "coordinates": [[-96.8, 32.78], [-96.6, 32.78], [-96.4, 32.78]],
+        "distance_miles": 20.0,
+        "duration_seconds": 1200.0,
+        "steps": [
+            {"distance_miles": 20.0, "duration_seconds": 1200.0, "from": 0, "to": 2},
+            {"distance_miles": 0.0, "duration_seconds": 0.0, "from": 2, "to": 2},
+        ],
+    }
+    monkeypatch.setattr(planning, "route_options", lambda origin, destination, weight_lb: [route])
+
+    def hourly_forecast(points, start, end):
+        hours = int((end - start).total_seconds() // 3600) + 1
+
+        # The middle checkpoint has no forecast at all; the others sit at 40 mph, High on
+        # the table, which the 45,000 lb load lifts to Severe.
+        def reading(p, value):
+            return [None if p["mile"] == 10 else value] * hours
+
+        return [
+            {
+                "lat": p["lat"],
+                "lon": p["lon"],
+                "start": start,
+                "wind_mph": reading(p, 40.0),
+                "rain_in": reading(p, 0.0),
+                "snow_in": reading(p, 0.0),
+                "temp_f": reading(p, 61.2),
+                "weather_code": reading(p, 1),
+            }
+            for p in points
+        ]
+
+    monkeypatch.setattr(planning.weather, "hourly_forecast", hourly_forecast)
+    when = soon().replace(minute=0, second=0, microsecond=0)
+    response = post(client, body(departure=when.isoformat(), weight_lb=45000))
+
+    assert response.status_code == 200
+    trip = response.json()
+    assert trip["departure"] == when.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert trip["hours"][0] == trip["departure"] and len(trip["hours"]) == 49
+    assert (trip["origin"], trip["destination"], trip["weight_lb"], trip["interval_miles"]) == (PLACES["Dallas"], PLACES["Chicago"], 45000, 10)
+    assert trip["recommended"] == "Fastest"
+    (fastest,) = trip["routes"]
+    assert "steps" not in fastest
+    assert fastest["miles"] == {"Low": 0.0, "Moderate": 0.0, "High": 0.0, "Severe": 10.0, "No Travel": 0.0, "No data": 10.0}
+    assert [cp["level"] for cp in fastest["checkpoints"]] == ["Severe", None, "Severe"]
+    assert fastest["checkpoints"][1]["weather"] == {
+        "time": trip["hours"][0],
+        "wind_mph": None,
+        "rain_in": None,
+        "snow_in": None,
+        "temp_f": None,
+        "weather_code": None,
+    }
+    assert fastest["checkpoints"][1]["hourly"] == [None] * 49
+    assert fastest["checkpoints"][2]["eta"] == (when + timedelta(seconds=1200)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert fastest["checkpoints"][2]["hourly"][:2] == ["Severe", "Severe"]
+
+
 def test_only_post_is_allowed(client):
     assert client.get(URL).status_code == 405
 

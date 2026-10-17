@@ -42,6 +42,9 @@ def forecast_calls(monkeypatch):
 
     def hourly_forecast(points, start, end):
         calls.append((points, start, end))
+        # The real one floors the start to the hour (test_weather covers that) and the
+        # hourly series hangs off that.
+        start = start.replace(minute=0, second=0, microsecond=0)
         hours = int((end - start).total_seconds() // 3600) + 1
         return [
             {
@@ -110,6 +113,15 @@ def test_every_checkpoint_carries_the_risk_of_each_hour_of_the_window(routes, fo
     assert {tuple(cp["hourly"]) for cp in slow["checkpoints"]} == {tuple(["Low"] * 49)}
 
 
+def test_the_hours_start_at_the_departure_hour_not_at_the_departure_minute(routes, forecast_calls):
+    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE + timedelta(minutes=30), 20000)
+
+    assert trip["hours"][0] == DEPARTURE
+    assert len(trip["hours"]) == 49
+    _, fast = trip["routes"]
+    assert fast["checkpoints"][0]["hourly"] == ["Severe"] * 24 + ["Low"] * 25
+
+
 def test_the_load_is_applied_to_every_checkpoint(routes, forecast_calls):
     trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 35000)
 
@@ -120,7 +132,8 @@ def test_the_load_is_applied_to_every_checkpoint(routes, forecast_calls):
 
 
 def test_places_that_snap_to_one_road_point_are_rejected_before_any_forecast(routes, forecast_calls):
-    routes[0]["distance_miles"] = 0.0
+    for found in routes:
+        found["distance_miles"] = 0.0
 
     with pytest.raises(planning.SamePlace):
         planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)

@@ -18,10 +18,11 @@ export function checkpoint(mile, level, hour, extra = {}) {
   }
 }
 
-function route(name, miles, seconds, levels, summary) {
+function route(id, name, miles, seconds, levels, summary) {
   const step = miles / (levels.length - 1)
   const checkpoints = levels.map((level, i) => checkpoint(Math.round(step * i), level, (seconds / 3600) * (i / (levels.length - 1))))
   return {
+    id,
     name,
     distance_miles: miles,
     duration_seconds: seconds,
@@ -45,9 +46,9 @@ export function storm() {
     hours: Array.from({ length: 49 }, (_, i) => iso(i)),
     recommended: 'Via US 278',
     routes: [
-      route('Via US 278', 100, 7200, ['Low', 'Moderate', 'Low', 'Low', 'Low'], { miles: { Low: 75, Moderate: 25 }, average_risk: 0.2, recommended: true }),
-      route('Via I 55', 95, 6600, ['Low', 'High', 'Low', 'Low', 'Low'], { miles: { Low: 71, High: 24 }, average_risk: 0.4 }),
-      route('Fastest', 90, 6000, ['Low', 'No Travel', 'Severe', 'Low', 'Low'], { miles: { Low: 40, Severe: 22, 'No Travel': 23 }, average_risk: 1.4, no_travel: true }),
+      route(2, 'Via US 278', 100, 7200, ['Low', 'Moderate', 'Low', 'Low', 'Low'], { miles: { Low: 75, Moderate: 25 }, average_risk: 0.2, recommended: true }),
+      route(1, 'Via I 55', 95, 6600, ['Low', 'High', 'Low', 'Low', 'Low'], { miles: { Low: 71, High: 24 }, average_risk: 0.4 }),
+      route(0, 'Fastest', 90, 6000, ['Low', 'No Travel', 'Severe', 'Low', 'Low'], { miles: { Low: 40, Severe: 22, 'No Travel': 23 }, average_risk: 1.4, no_travel: true }),
     ],
   }
 }

@@ -39,3 +39,8 @@ def place(text):
         return geocode(text)
     except ors.PlaceNotFound as exc:
         raise serializers.ValidationError(str(exc))
+
+
+class AssessSerializer(serializers.Serializer):
+    ticket = serializers.CharField()
+    forecasts = serializers.ListField(child=serializers.JSONField(), allow_empty=False)

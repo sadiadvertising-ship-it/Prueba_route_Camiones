@@ -1,8 +1,12 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from django.core import signing
 
-from trips.services import planning
+from trips.services import planning, weather
+from trips.tests.openmeteo import answers
 
 DEPARTURE = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
 ORIGIN = {"label": "Origin", "lat": 30.0, "lon": -100.0}
@@ -10,7 +14,7 @@ DESTINATION = {"label": "Destination", "lat": 30.0, "lon": -99.0}
 # 46 mph on the fast route is Severe for a light load and No Travel above 30,000 lb,
 # so the same forecast serves the ranking test and the load test. It calms down after
 # a day, which the hourly series must show while the ETAs, all within hours, do not.
-WIND = {30.0: 46.0, 31.0: 10.0}
+WIND = {"Fast": 46.0, "Slow": 10.0}
 CALM_AFTER = 24
 
 
@@ -36,61 +40,61 @@ def routes(monkeypatch):
     return found
 
 
-@pytest.fixture
-def forecast_calls(monkeypatch):
-    calls = []
-
-    def hourly_forecast(points, start, end):
-        calls.append((points, start, end))
-        # The real one floors the start to the hour (test_weather covers that) and the
-        # hourly series hangs off that.
-        start = start.replace(minute=0, second=0, microsecond=0)
-        hours = int((end - start).total_seconds() // 3600) + 1
-        return [
-            {
-                "lat": p["lat"],
-                "lon": p["lon"],
-                "start": start,
-                "wind_mph": [WIND[p["lat"]] if i < CALM_AFTER else 10.0 for i in range(hours)],
-                "rain_in": [0.0] * hours,
-                "snow_in": [0.0] * hours,
-                "temp_f": [60.0] * hours,
-                "weather_code": [1] * hours,
-            }
-            for p in points
-        ]
-
-    monkeypatch.setattr(planning.weather, "hourly_forecast", hourly_forecast)
-    return calls
+def stormy(route, point, hour):
+    return {"wind_speed_10m": WIND[route["name"]] if hour < CALM_AFTER else 10.0}
 
 
-def test_weather_is_fetched_once_for_every_checkpoint_over_two_days(routes, forecast_calls):
-    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
+def prepare(weight_lb=20000, departure=DEPARTURE, **options):
+    return planning.prepare(ORIGIN, DESTINATION, departure, weight_lb, **options)
+
+
+def plan(**options):
+    trip = prepare(**options)
+    return trip, planning.assess(trip["ticket"], answers(trip, stormy))
+
+
+def window(trip):
+    (only,) = trip["forecast_urls"]
+    query = {key: values[0] for key, values in parse_qs(urlsplit(only).query).items()}
+    return query["start_hour"], query["end_hour"], len(query["latitude"].split(","))
+
+
+def test_every_checkpoint_of_every_route_goes_into_one_two_day_forecast_request(routes):
+    trip = prepare()
 
     assert trip["interval_miles"] == 10
-    assert [len(r["checkpoints"]) for r in trip["routes"]] == [13, 11]
-    assert len(forecast_calls) == 1
-    points, start, end = forecast_calls[0]
-    assert len(points) == 24
-    assert (start, end) == (DEPARTURE, DEPARTURE + timedelta(hours=48))
+    assert [(r["id"], r["name"]) for r in trip["routes"]] == [(0, "Fast"), (1, "Slow")]
+    assert [len(r["checkpoints"]) for r in trip["routes"]] == [11, 13]
+    assert window(trip) == ("2026-10-20T12:00", "2026-10-22T12:00", 24)
+    assert (trip["hours"][0], trip["hours"][-1]) == (DEPARTURE, DEPARTURE + timedelta(hours=48))
+    assert all("steps" not in r and "coordinates" in r for r in trip["routes"])
 
 
-def test_forecast_window_stretches_to_the_arrival_of_a_longer_trip(routes, forecast_calls):
+def test_the_window_stretches_to_the_arrival_of_a_longer_trip(routes):
     routes[1]["duration_seconds"] = 60 * 3600.0
     routes[1]["steps"][0]["duration_seconds"] = 60 * 3600.0
 
-    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
+    trip = prepare()
 
-    assert forecast_calls[0][2] == DEPARTURE + timedelta(hours=60)
+    assert window(trip)[1] == "2026-10-23T00:00"
     assert len(trip["hours"]) == 49
 
 
-def test_checkpoints_carry_weather_and_level_and_the_safer_route_wins(routes, forecast_calls):
-    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
+def test_the_hours_start_at_the_departure_hour_not_at_the_departure_minute(routes):
+    trip, result = plan(departure=DEPARTURE + timedelta(minutes=30))
 
-    slow, fast = trip["routes"]
-    assert (slow["name"], fast["name"]) == ("Slow", "Fast")
-    assert trip["recommended"] == "Slow"
+    assert trip["hours"][0] == DEPARTURE
+    assert window(trip)[:2] == ("2026-10-20T12:00", "2026-10-22T13:00")
+    _, fast = result["routes"]
+    assert fast["checkpoints"][0]["hourly"] == ["Severe"] * 24 + ["Low"] * 25
+
+
+def test_checkpoints_carry_weather_and_level_and_the_safer_route_wins(routes):
+    _, result = plan()
+
+    slow, fast = result["routes"]
+    assert (slow["name"], slow["id"], fast["name"], fast["id"]) == ("Slow", 1, "Fast", 0)
+    assert result["recommended"] == "Slow"
     assert slow["recommended"] is True and fast["recommended"] is False
     assert fast["miles"]["Severe"] == 100.0
     assert {p["level"] for p in fast["checkpoints"]} == {"Severe"}
@@ -99,51 +103,63 @@ def test_checkpoints_carry_weather_and_level_and_the_safer_route_wins(routes, fo
     assert first["weather"]["wind_mph"] == 10.0
     assert first["weather"]["time"] == DEPARTURE
     assert slow["checkpoints"][-1]["eta"] == DEPARTURE + timedelta(seconds=9000)
-    assert "steps" not in slow and "coordinates" in slow
 
 
-def test_every_checkpoint_carries_the_risk_of_each_hour_of_the_window(routes, forecast_calls):
-    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
+def test_every_checkpoint_carries_the_risk_of_each_hour_of_the_window(routes):
+    _, result = plan()
 
-    assert trip["hours"][0] == DEPARTURE
-    assert trip["hours"][-1] == DEPARTURE + timedelta(hours=48)
-    slow, fast = trip["routes"]
+    slow, fast = result["routes"]
     for cp in fast["checkpoints"]:
         assert cp["hourly"] == ["Severe"] * 24 + ["Low"] * 25
     assert {tuple(cp["hourly"]) for cp in slow["checkpoints"]} == {tuple(["Low"] * 49)}
 
 
-def test_the_hours_start_at_the_departure_hour_not_at_the_departure_minute(routes, forecast_calls):
-    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE + timedelta(minutes=30), 20000)
+def test_the_load_signed_into_the_ticket_is_applied_to_every_checkpoint(routes):
+    _, result = plan(weight_lb=35000)
 
-    assert trip["hours"][0] == DEPARTURE
-    assert len(trip["hours"]) == 49
-    _, fast = trip["routes"]
-    assert fast["checkpoints"][0]["hourly"] == ["Severe"] * 24 + ["Low"] * 25
-
-
-def test_the_load_is_applied_to_every_checkpoint(routes, forecast_calls):
-    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 35000)
-
-    fast = trip["routes"][1]
+    fast = result["routes"][1]
     assert fast["no_travel"] is True
     assert {p["level"] for p in fast["checkpoints"]} == {"No Travel"}
-    assert trip["recommended"] == "Slow"
+    assert result["recommended"] == "Slow"
 
 
-def test_places_that_snap_to_one_road_point_are_rejected_before_any_forecast(routes, forecast_calls):
+def test_places_that_snap_to_one_road_point_are_rejected(routes):
     for found in routes:
         found["distance_miles"] = 0.0
 
     with pytest.raises(planning.SamePlace):
-        planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
-    assert forecast_calls == []
+        prepare()
 
 
-def test_explicit_interval_is_used_for_every_route(routes, forecast_calls):
-    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000, interval=25)
+def test_explicit_interval_is_used_for_every_route(routes):
+    trip = prepare(interval=25)
 
     assert trip["interval_miles"] == 25
     miles = {r["name"]: [p["mile"] for p in r["checkpoints"]] for r in trip["routes"]}
     assert miles["Fast"] == [0, 25, 50, 75, 100]
     assert miles["Slow"] == [0, 25, 50, 75, 100, 120]
+
+
+def test_a_forged_ticket_is_refused(routes):
+    trip = prepare()
+    forged = signing.dumps({"weight_lb": 1, "start": DEPARTURE.isoformat(), "hours": 49, "routes": []}, salt="someone else")
+
+    with pytest.raises(planning.Expired):
+        planning.assess(forged, answers(trip, stormy))
+
+
+def test_a_ticket_older_than_an_hour_is_refused(routes, monkeypatch):
+    trip = prepare()
+    later = signing.time.time() + planning.TICKET_AGE + 1
+    monkeypatch.setattr(signing, "time", SimpleNamespace(time=lambda: later))
+
+    with pytest.raises(planning.Expired):
+        planning.assess(trip["ticket"], answers(trip, stormy))
+
+
+def test_forecasts_that_do_not_match_the_checkpoints_are_refused(routes):
+    trip = prepare()
+    (items,) = answers(trip, stormy)
+
+    with pytest.raises(weather.BadForecast):
+        planning.assess(trip["ticket"], [items[:-1]])

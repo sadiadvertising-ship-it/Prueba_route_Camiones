@@ -55,6 +55,10 @@ CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:
 
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 
+# The browser posts back the hourly forecast of every checkpoint; a coast-to-coast trip
+# sampled every 10 miles runs past Django's 2.5 MB default.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+
 LANGUAGE_CODE = "en-us"
 
 TIME_ZONE = "UTC"

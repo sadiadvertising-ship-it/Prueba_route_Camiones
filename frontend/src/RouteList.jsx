@@ -39,7 +39,7 @@ export default function RouteList({ routes, selected, onSelect }) {
   return (
     <ol className="routes">
       {routes.map((route, i) => (
-        <li key={route.name}>
+        <li key={route.id}>
           <button type="button" className="route" aria-pressed={i === selected} onClick={() => onSelect(i)}>
             <span className="route-name">
               <strong>{route.name}</strong>

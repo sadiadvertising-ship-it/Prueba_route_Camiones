@@ -1,9 +1,5 @@
 from datetime import timedelta, timezone
-
-import requests
-from django.core.cache import cache
-
-from . import cache_key
+from urllib.parse import urlencode
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 # "rain" alone misses convective showers, which is where the heavy bursts come from.
@@ -12,23 +8,25 @@ HOURLY = ["wind_speed_10m", "rain", "showers", "snowfall", "temperature_2m", "we
 BATCH_SIZE = 100
 
 
-class WeatherError(Exception):
+class BadForecast(Exception):
     pass
 
 
-def hourly_forecast(points, start, end):
+def window(start, end):
     start = utc(start).replace(minute=0, second=0, microsecond=0)
     end = utc(end)
     if end.minute or end.second or end.microsecond:
         end += timedelta(hours=1)
-    end = end.replace(minute=0, second=0, microsecond=0)
-    forecasts = []
-    for i in range(0, len(points), BATCH_SIZE):
-        forecasts += fetch(points[i:i + BATCH_SIZE], start, end)
-    return forecasts
+    return start, end.replace(minute=0, second=0, microsecond=0)
 
 
-def fetch(points, start, end):
+def urls(points, start, end):
+    # Open-Meteo's free tier is limited per IP and cloud hosts share theirs, so the
+    # browser fetches these with its own quota and posts the answers back.
+    return [url(points[i:i + BATCH_SIZE], start, end) for i in range(0, len(points), BATCH_SIZE)]
+
+
+def url(points, start, end):
     params = {
         "latitude": ",".join(f"{p['lat']:.3f}" for p in points),
         "longitude": ",".join(f"{p['lon']:.3f}" for p in points),
@@ -40,46 +38,43 @@ def fetch(points, start, end):
         "start_hour": start.strftime("%Y-%m-%dT%H:%M"),
         "end_hour": end.strftime("%Y-%m-%dT%H:%M"),
     }
-    key = cache_key("weather", params)
-    forecasts = cache.get(key)
-    if forecasts is None:
-        data = request(params)
-        items = data if isinstance(data, list) else [data]
-        forecasts = [parse(item, point, start) for item, point in zip(items, points)]
-        cache.set(key, forecasts, 600)
-    return forecasts
+    return f"{FORECAST_URL}?{urlencode(params, safe=',:')}"
 
 
-def request(params):
+def read(answers, points, start, hours):
+    # Each answer is what Open-Meteo sent for one URL: a list, or a lone object for one point.
+    items = [item for answer in answers for item in (answer if isinstance(answer, list) else [answer])]
+    if len(items) != len(points):
+        raise BadForecast(f"Expected forecasts for {len(points)} checkpoints, got {len(items)}.")
+    return [parse(item, point, start, hours) for item, point in zip(items, points)]
+
+
+def parse(item, point, start, hours):
     try:
-        response = requests.get(FORECAST_URL, params=params, timeout=20)
-    except requests.RequestException as exc:
-        raise WeatherError("Open-Meteo did not answer. Try again in a minute.") from exc
-    if response.status_code >= 400:
-        try:
-            body = response.json()
-        except ValueError:
-            body = None
-        reason = body.get("reason") if isinstance(body, dict) else None
-        raise WeatherError(f"Open-Meteo error {response.status_code}: {reason or response.text[:200]}")
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise WeatherError("Open-Meteo returned an unexpected response") from exc
-
-
-def parse(item, point, start):
-    hourly = item["hourly"]
+        hourly = item["hourly"]
+        times = hourly["time"]
+        wind, rain, showers, snow, temp, code = (hourly[name] for name in HOURLY)
+    except (KeyError, TypeError):
+        raise BadForecast("A forecast is missing its hourly values.")
+    series = (times, wind, rain, showers, snow, temp, code)
+    if not all(isinstance(values, list) and len(values) == hours for values in series) or times[0] != start.strftime("%Y-%m-%dT%H:%M"):
+        raise BadForecast("A forecast does not cover the trip's time window.")
+    if not all(number(value) for values in series[1:] for value in values):
+        raise BadForecast("Forecast values must be numbers.")
     return {
         "lat": point["lat"],
         "lon": point["lon"],
         "start": start,
-        "wind_mph": hourly["wind_speed_10m"],
-        "rain_in": [liquid(rain, showers) for rain, showers in zip(hourly["rain"], hourly["showers"])],
-        "snow_in": hourly["snowfall"],
-        "temp_f": hourly["temperature_2m"],
-        "weather_code": hourly["weather_code"],
+        "wind_mph": wind,
+        "rain_in": [liquid(r, s) for r, s in zip(rain, showers)],
+        "snow_in": snow,
+        "temp_f": temp,
+        "weather_code": code,
     }
+
+
+def number(value):
+    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
 
 
 def liquid(rain, showers):

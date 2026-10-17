@@ -4,9 +4,11 @@ import pytest
 from django.utils import timezone
 
 from trips import serializers, views
-from trips.services import ors, planning, weather
+from trips.services import ors, planning
+from trips.tests.openmeteo import NO_DATA, answers
 
 URL = "/api/trips/plan/"
+ASSESS = "/api/trips/assess/"
 PLACES = {
     "Dallas": {"label": "Dallas, TX, USA", "lat": 32.78, "lon": -96.8},
     "Chicago": {"label": "Chicago, IL, USA", "lat": 41.88, "lon": -87.63},
@@ -25,11 +27,11 @@ def planned(monkeypatch):
     monkeypatch.setattr(serializers, "geocode", geocode)
     calls = []
 
-    def plan(**trip):
+    def prepare(**trip):
         calls.append(trip)
-        return {"recommended": "Fastest", "routes": []}
+        return {"routes": [], "forecast_urls": [], "ticket": "signed"}
 
-    monkeypatch.setattr(views.planning, "plan", plan)
+    monkeypatch.setattr(views.planning, "prepare", prepare)
     return calls
 
 
@@ -56,7 +58,7 @@ def test_plan_passes_the_resolved_trip_to_the_planner(client, planned):
     response = post(client, body(departure=when.isoformat(), interval=25))
 
     assert response.status_code == 200
-    assert response.json() == {"recommended": "Fastest", "routes": []}
+    assert response.json() == {"routes": [], "forecast_urls": [], "ticket": "signed"}
     assert planned == [
         {
             "origin": PLACES["Dallas"],
@@ -127,29 +129,25 @@ def test_unknown_place_is_reported_on_its_field(client, planned):
 
 
 def test_same_origin_and_destination_is_rejected(client, planned, monkeypatch):
-    def plan(**trip):
+    def prepare(**trip):
         raise planning.SamePlace("Origin and destination are the same place.")
 
-    monkeypatch.setattr(views.planning, "plan", plan)
+    monkeypatch.setattr(views.planning, "prepare", prepare)
     response = post(client, body())
 
     assert response.status_code == 400
     assert response.json() == {"destination": ["Origin and destination are the same place."]}
 
 
-@pytest.mark.parametrize(
-    "error",
-    [ors.ORSError("OpenRouteService error 503: busy"), weather.WeatherError("Open-Meteo is unreachable")],
-)
-def test_upstream_failures_come_back_as_a_bad_gateway(client, planned, monkeypatch, error):
-    def plan(**trip):
-        raise error
+def test_routing_failures_come_back_as_a_bad_gateway(client, planned, monkeypatch):
+    def prepare(**trip):
+        raise ors.ORSError("OpenRouteService error 503: busy")
 
-    monkeypatch.setattr(views.planning, "plan", plan)
+    monkeypatch.setattr(views.planning, "prepare", prepare)
     response = post(client, body())
 
     assert response.status_code == 502
-    assert response.json() == {"detail": str(error)}
+    assert response.json() == {"detail": "OpenRouteService error 503: busy"}
 
 
 def test_geocoder_outage_is_a_bad_gateway_too(client, planned, monkeypatch):
@@ -163,7 +161,8 @@ def test_geocoder_outage_is_a_bad_gateway_too(client, planned, monkeypatch):
     assert "quota" in response.json()["detail"]
 
 
-def test_the_whole_plan_renders_as_json(client, monkeypatch):
+@pytest.fixture
+def routed(monkeypatch):
     monkeypatch.setattr(serializers, "geocode", geocode)
     route = {
         "name": "Fastest",
@@ -175,31 +174,14 @@ def test_the_whole_plan_renders_as_json(client, monkeypatch):
             {"distance_miles": 0.0, "duration_seconds": 0.0, "from": 2, "to": 2},
         ],
     }
-    monkeypatch.setattr(planning, "route_options", lambda origin, destination, weight_lb: [route])
+    monkeypatch.setattr(planning, "route_options", lambda origin, destination, weight_lb: [dict(route)])
 
-    def hourly_forecast(points, start, end):
-        hours = int((end - start).total_seconds() // 3600) + 1
 
-        # The middle checkpoint has no forecast at all; the others sit at 40 mph, High on
-        # the table, which the 45,000 lb load lifts to Severe.
-        def reading(p, value):
-            return [None if p["mile"] == 10 else value] * hours
+def assess(client, payload):
+    return client.post(ASSESS, payload, content_type="application/json")
 
-        return [
-            {
-                "lat": p["lat"],
-                "lon": p["lon"],
-                "start": start,
-                "wind_mph": reading(p, 40.0),
-                "rain_in": reading(p, 0.0),
-                "snow_in": reading(p, 0.0),
-                "temp_f": reading(p, 61.2),
-                "weather_code": reading(p, 1),
-            }
-            for p in points
-        ]
 
-    monkeypatch.setattr(planning.weather, "hourly_forecast", hourly_forecast)
+def test_a_trip_goes_from_routes_to_a_ranked_plan_in_two_calls(client, routed):
     when = soon().replace(minute=0, second=0, microsecond=0)
     response = post(client, body(departure=when.isoformat(), weight_lb=45000))
 
@@ -208,9 +190,23 @@ def test_the_whole_plan_renders_as_json(client, monkeypatch):
     assert trip["departure"] == when.strftime("%Y-%m-%dT%H:%M:%SZ")
     assert trip["hours"][0] == trip["departure"] and len(trip["hours"]) == 49
     assert (trip["origin"], trip["destination"], trip["weight_lb"], trip["interval_miles"]) == (PLACES["Dallas"], PLACES["Chicago"], 45000, 10)
-    assert trip["recommended"] == "Fastest"
     (fastest,) = trip["routes"]
-    assert "steps" not in fastest
+    assert "steps" not in fastest and len(fastest["coordinates"]) == 3
+    assert [cp["mile"] for cp in fastest["checkpoints"]] == [0, 10, 20]
+    assert len(trip["forecast_urls"]) == 1 and trip["ticket"]
+
+    # The middle checkpoint has no forecast at all; the others sit at 40 mph, High on
+    # the table, which the 45,000 lb load lifts to Severe.
+    def reading(route, point, hour):
+        return NO_DATA if point["mile"] == 10 else {"wind_speed_10m": 40.0, "temperature_2m": 61.2}
+
+    response = assess(client, {"ticket": trip["ticket"], "forecasts": answers(trip, reading)})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["recommended"] == "Fastest"
+    (fastest,) = result["routes"]
+    assert fastest["id"] == 0 and "coordinates" not in fastest
     assert fastest["miles"] == {"Low": 0.0, "Moderate": 0.0, "High": 0.0, "Severe": 10.0, "No Travel": 0.0, "No data": 10.0}
     assert [cp["level"] for cp in fastest["checkpoints"]] == ["Severe", None, "Severe"]
     assert fastest["checkpoints"][1]["weather"] == {
@@ -226,8 +222,32 @@ def test_the_whole_plan_renders_as_json(client, monkeypatch):
     assert fastest["checkpoints"][2]["hourly"][:2] == ["Severe", "Severe"]
 
 
+def test_assess_reports_missing_fields(client):
+    response = assess(client, {})
+
+    assert response.status_code == 400
+    assert set(response.json()) == {"ticket", "forecasts"}
+
+
+def test_a_ticket_the_server_did_not_sign_asks_to_plan_again(client):
+    response = assess(client, {"ticket": "made-up", "forecasts": [{}]})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "This plan has expired. Plan the trip again."}
+
+
+def test_forecasts_that_do_not_fit_are_reported_on_their_field(client, routed):
+    trip = post(client, body()).json()
+
+    response = assess(client, {"ticket": trip["ticket"], "forecasts": [[]]})
+
+    assert response.status_code == 400
+    assert response.json() == {"forecasts": ["Expected forecasts for 3 checkpoints, got 0."]}
+
+
 def test_only_post_is_allowed(client):
     assert client.get(URL).status_code == 405
+    assert client.get(ASSESS).status_code == 405
 
 
 def test_departure_exactly_a_week_ahead_is_still_accepted(client, planned):

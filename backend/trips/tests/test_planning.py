@@ -8,8 +8,10 @@ DEPARTURE = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
 ORIGIN = {"label": "Origin", "lat": 30.0, "lon": -100.0}
 DESTINATION = {"label": "Destination", "lat": 30.0, "lon": -99.0}
 # 46 mph on the fast route is Severe for a light load and No Travel above 30,000 lb,
-# so the same forecast serves the ranking test and the load test.
+# so the same forecast serves the ranking test and the load test. It calms down after
+# a day, which the hourly series must show while the ETAs, all within hours, do not.
 WIND = {30.0: 46.0, 31.0: 10.0}
+CALM_AFTER = 24
 
 
 def route(name, lat, miles=100.0, seconds=7200.0):
@@ -46,7 +48,7 @@ def forecast_calls(monkeypatch):
                 "lat": p["lat"],
                 "lon": p["lon"],
                 "start": start,
-                "wind_mph": [WIND[p["lat"]]] * hours,
+                "wind_mph": [WIND[p["lat"]] if i < CALM_AFTER else 10.0 for i in range(hours)],
                 "rain_in": [0.0] * hours,
                 "snow_in": [0.0] * hours,
                 "temp_f": [60.0] * hours,
@@ -74,9 +76,10 @@ def test_forecast_window_stretches_to_the_arrival_of_a_longer_trip(routes, forec
     routes[1]["duration_seconds"] = 60 * 3600.0
     routes[1]["steps"][0]["duration_seconds"] = 60 * 3600.0
 
-    planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
+    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
 
     assert forecast_calls[0][2] == DEPARTURE + timedelta(hours=60)
+    assert len(trip["hours"]) == 49
 
 
 def test_checkpoints_carry_weather_and_level_and_the_safer_route_wins(routes, forecast_calls):
@@ -94,6 +97,17 @@ def test_checkpoints_carry_weather_and_level_and_the_safer_route_wins(routes, fo
     assert first["weather"]["time"] == DEPARTURE
     assert slow["checkpoints"][-1]["eta"] == DEPARTURE + timedelta(seconds=9000)
     assert "steps" not in slow and "coordinates" in slow
+
+
+def test_every_checkpoint_carries_the_risk_of_each_hour_of_the_window(routes, forecast_calls):
+    trip = planning.plan(ORIGIN, DESTINATION, DEPARTURE, 20000)
+
+    assert trip["hours"][0] == DEPARTURE
+    assert trip["hours"][-1] == DEPARTURE + timedelta(hours=48)
+    slow, fast = trip["routes"]
+    for cp in fast["checkpoints"]:
+        assert cp["hourly"] == ["Severe"] * 24 + ["Low"] * 25
+    assert {tuple(cp["hourly"]) for cp in slow["checkpoints"]} == {tuple(["Low"] * 49)}
 
 
 def test_the_load_is_applied_to_every_checkpoint(routes, forecast_calls):

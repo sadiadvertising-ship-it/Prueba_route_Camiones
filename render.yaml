@@ -16,8 +16,8 @@ services:
         value: "0"
       - key: DJANGO_SECRET_KEY
         generateValue: true
-      # Both are typed into the Render dashboard, never into the repository.
+      # The key is typed into the Render dashboard, never into the repository.
       - key: ORS_API_KEY
         sync: false
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        value: https://truck-route-planner-gamma.vercel.app

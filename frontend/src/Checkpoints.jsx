@@ -1,18 +1,9 @@
+import Level from './Level.jsx'
 import { clock } from './format.js'
-import { slug } from './levels.js'
 
 function Reading({ value, unit }) {
   if (value == null) return <td>–</td>
   return <td className={value ? undefined : 'zero'}>{`${value} ${unit}`}</td>
-}
-
-function Level({ level }) {
-  return (
-    <span className={`level ${slug(level)}`}>
-      <i />
-      {level || 'No data'}
-    </span>
-  )
 }
 
 export default function Checkpoints({ route }) {

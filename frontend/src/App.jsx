@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { planTrip } from './api.js'
 import Checkpoints from './Checkpoints.jsx'
 import RouteList from './RouteList.jsx'
+import RouteMap from './RouteMap.jsx'
 import TripForm from './TripForm.jsx'
 import { day, pounds } from './format.js'
 
@@ -12,7 +13,7 @@ function loadRule(lb) {
   return 'This load is light enough for the standard wind limits.'
 }
 
-function Results({ trip, busy, selected }) {
+function Status({ trip, busy }) {
   if (busy) {
     return <p className="status">Finding truck routes and checking the hourly forecast along each one. This takes a few seconds.</p>
   }
@@ -33,7 +34,6 @@ function Results({ trip, busy, selected }) {
       {!trip.recommended && (
         <p className="problem">No route is advisable: every option runs into No Travel conditions. Try a later departure.</p>
       )}
-      <Checkpoints route={trip.routes[selected]} />
     </>
   )
 }
@@ -43,6 +43,12 @@ export default function App() {
   const [selected, setSelected] = useState(0)
   const [errors, setErrors] = useState({})
   const [busy, setBusy] = useState(false)
+  const main = useRef(null)
+
+  useEffect(() => {
+    // On a phone the form and the route list push the result below the fold.
+    if (trip && matchMedia('(max-width: 860px)').matches) main.current.scrollIntoView({ behavior: 'smooth' })
+  }, [trip, selected])
 
   async function plan(values) {
     setBusy(true)
@@ -76,8 +82,12 @@ export default function App() {
           </div>
         )}
       </aside>
-      <main>
-        <Results trip={trip} busy={busy} selected={selected} />
+      <main ref={main}>
+        <Status trip={trip} busy={busy} />
+        <div className={busy ? 'stale' : undefined}>
+          <RouteMap trip={trip} selected={selected} onSelect={setSelected} />
+          {trip && <Checkpoints route={trip.routes[selected]} />}
+        </div>
       </main>
     </div>
   )

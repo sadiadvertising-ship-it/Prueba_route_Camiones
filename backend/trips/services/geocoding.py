@@ -2,6 +2,10 @@ from django.core.cache import cache
 
 from . import cache_key, ors
 
+# Counties and states are left out: "Boise, ID" otherwise comes back as Boise County,
+# a point in the mountains an hour from town.
+LAYERS = "address,venue,street,neighbourhood,borough,locality,localadmin,postalcode"
+
 
 def geocode(text):
     text = " ".join(text.split())
@@ -16,7 +20,7 @@ def geocode(text):
 
 
 def search(text):
-    data = ors.request("GET", "/geocode/search", params={"text": text, "size": 1})
+    data = ors.request("GET", "/geocode/search", params={"text": text, "size": 1, "layers": LAYERS})
     features = data.get("features") or []
     if not features:
         raise ors.PlaceNotFound(f"Could not find a place called {text!r}")

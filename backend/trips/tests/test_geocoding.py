@@ -19,6 +19,8 @@ def test_geocode_returns_first_match():
 
     assert place == {"label": "Dallas, TX, USA", "lat": 32.78, "lon": -96.8}
     assert responses.calls[0].request.params["text"] == "dallas tx"
+    assert "locality" in responses.calls[0].request.params["layers"]
+    assert "county" not in responses.calls[0].request.params["layers"]
     assert responses.calls[0].request.headers["Authorization"] == "test-key"
 
 
